@@ -13,6 +13,7 @@ WAM 论文双日推送机器人 v2 (国内友好版)
 
 用法:
   python paper_bot.py                     # 正常双日抓取
+  python paper_bot.py --reset-seen        # 清空 seen.json 历史记录
   DATA_SOURCE=s2 python paper_bot.py      # 只用 Semantic Scholar
   BACKFILL_DAYS=7 python paper_bot.py     # 手动补推过去 7 天
 """
@@ -96,6 +97,12 @@ def save_seen(s: set[str]) -> None:
             json.dump(sorted(s), f, ensure_ascii=False, indent=2)
     except Exception as e:
         log(f"写 seen.json 失败: {e}")
+
+
+def reset_seen() -> None:
+    save_seen(set())
+    print(f"已清空 {SEEN_FILE}")
+
 
 def aid_of(entry_id: str) -> str:
     """http://arxiv.org/abs/2501.12345v2 -> 2501.12345"""
@@ -494,6 +501,9 @@ def main() -> None:
     log("完成")
 
 if __name__ == "__main__":
+    if "--reset-seen" in sys.argv or "-r" in sys.argv:
+        reset_seen()
+        raise SystemExit(0)
     log("=== WAM Paper Bot v2 启动 ===")
     log(f"Python: {sys.version}")
     try:
