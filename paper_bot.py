@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-WAM 论文双日推送机器人 v2 (国内友好版)
+WAM 论文与社媒内容每周精选机器人
 ==============================
-数据源优先级:
-  1. arXiv API (直连或走代理)
-  2. Semantic Scholar (arXiv 不可用时兜底)
+内容来源:
+    1. arXiv 与 Semantic Scholar
+    2. Google News RSS 索引中的知乎和小红书公开内容
 
 国内使用建议:
   - 方案A(推荐): 部署到 GitHub Actions (服务器在国外，直连 arXiv 无压力)
@@ -12,15 +12,17 @@ WAM 论文双日推送机器人 v2 (国内友好版)
   - 方案C: 本地运行 + 设 DATA_SOURCE=s2 只用 Semantic Scholar (有时国内可通)
 
 用法:
-  python paper_bot.py                     # 正常双日抓取
+    python paper_bot.py                     # 每周抓取论文与社媒内容,最多发送 3 条
   python paper_bot.py --reset-seen        # 清空 seen.json 历史记录
   DATA_SOURCE=s2 python paper_bot.py      # 只用 Semantic Scholar
-  BACKFILL_DAYS=7 python paper_bot.py     # 手动补推过去 7 天
+    BACKFILL_DAYS=14 python paper_bot.py    # 手动补推过去 14 天
 """
 from __future__ import annotations
 
 import base64, hashlib, hmac, json, os, re, sys, time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from html import unescape
 from typing import Any
 
 import requests
@@ -43,9 +45,11 @@ DATA_SOURCE = os.environ.get("DATA_SOURCE", "auto").lower()
 
 # 输出配置
 TOP_N       = 3
-WINDOW_DAYS = 3.0  # 每次抓取最近 3 天，适合周一/三/五 9:00 定时推送
+WINDOW_DAYS = 7.25  # 每周运行,留少量重叠覆盖调度延迟
 SEEN_FILE   = "seen.json"
 LOG_FILE    = "run.log"
+GOOGLE_NEWS_RSS = "https://news.google.com/rss/search"
+SOCIAL_SITES = {"知乎": "zhihu.com", "小红书": "xiaohongshu.com"}
 
 # 飞书
 WEBHOOK = os.environ.get("FEISHU_WEBHOOK", "")
@@ -300,6 +304,68 @@ def fetch_from_s2(since: datetime) -> list[dict]:
     return papers
 
 
+def fetch_social_posts(since: datetime) -> list[dict]:
+    """通过公开新闻 RSS 发现知乎和小红书的世界模型相关内容。"""
+    import xml.etree.ElementTree as ET
+
+    query = '("world model" OR "世界模型" OR "world action model")'
+    posts = []
+    seen_urls = set()
+    for platform, domain in SOCIAL_SITES.items():
+        params = {
+            "q": f"site:{domain} {query}",
+            "hl": "zh-CN",
+            "gl": "CN",
+            "ceid": "CN:zh-Hans",
+        }
+        response = _http_get(GOOGLE_NEWS_RSS, params)
+        if response is None:
+            log(f"  {platform} RSS 搜索失败")
+            continue
+        try:
+            root = ET.fromstring(response.content)
+        except ET.ParseError as exc:
+            log(f"  {platform} RSS 解析失败: {exc}")
+            continue
+
+        for item in root.findall("./channel/item"):
+            title = (item.findtext("title") or "").strip()
+            url = (item.findtext("link") or "").strip()
+            published_raw = (item.findtext("pubDate") or "").strip()
+            if not title or not url or url in seen_urls:
+                continue
+            try:
+                published_at = parsedate_to_datetime(published_raw).astimezone(timezone.utc)
+                published_utc = published_at.replace(tzinfo=None)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if published_utc < since:
+                continue
+
+            description = item.findtext("description") or ""
+            description = unescape(re.sub(r"<[^>]+>", " ", description))
+            description = re.sub(r"\s+", " ", description).strip()
+            source_elem = item.find("source")
+            source_name = (source_elem.text or platform).strip() if source_elem is not None else platform
+            posts.append({
+                "title": title,
+                "authors": source_name,
+                "abstract": description[:1200],
+                "url": url,
+                "pdf": "",
+                "published": published_utc.strftime("%Y-%m-%d"),
+                "published_at": published_at.isoformat(),
+                "arxiv_id": "",
+                "item_id": f"social:{platform}:{url}",
+                "source": platform,
+                "cite": 0,
+            })
+            seen_urls.add(url)
+
+    log(f"  社媒 RSS 召回 {len(posts)} 条")
+    return posts
+
+
 # ======================== 召回: 统一入口 ========================
 
 def fetch_papers(since: datetime) -> list[dict]:
@@ -339,7 +405,7 @@ def score(p: dict) -> tuple[float, str]:
     txt = (p["title"] + " " + p.get("abstract", "")).lower()
     why, s = [], 0.0
     if "world action model" in txt or re.search(r"\bwam\b", txt):
-        s += 4; why.append("核心范式")
+        s += 4; why.append("WAM")
     elif "world model" in txt and any(k in txt for k in ("action", "policy", "robot", "embodied")):
         s += 3; why.append("世界模型+动作")
     else:
@@ -368,6 +434,10 @@ def rank(papers: list[dict], top: int = TOP_N) -> list[dict]:
             "published": p["published"],
             "reason": why,
             "cite": c,
+            "arxiv_id": p.get("arxiv_id", ""),
+            "item_id": p.get("arxiv_id", ""),
+            "source": "arXiv",
+            "published_at": p.get("published", ""),
         })
     return out
 
@@ -421,44 +491,39 @@ def push(papers: list[dict]) -> list[dict]:
     keyword = FEISHU_KEYWORD
     sent_ok = []
     if not papers:
-        resp = _post(card(f"{keyword} 本轮无新增论文", [
+        resp = _post(card(f"{keyword} 本周无新增内容", [
             {"tag": "div", "text": {"tag": "lark_md",
-             "content": f"**{keyword} 时间**: {now}\n**说明**: 时间窗内无符合条件的新论文(不代表没有新工作,可能是关键词未覆盖)。"}},
+             "content": f"**{keyword} 时间**: {now}\n**说明**: 最近一周没有找到符合条件的新内容。"}},
         ]))
         log(f"空结果通知发送返回: {resp}")
         return sent_ok
 
-    # 头部
-    resp = _post(card(f"{keyword} 论文速递", [
-        {"tag": "div", "text": {"tag": "lark_md",
-         "content": f"**{keyword} | {datetime.now():%Y-%m-%d}  共 {len(papers)} 篇**\n按相关性排序,展示前 {len(papers)} 篇"}},
-    ]))
-    log(f"头部通知发送返回: {resp}")
-    time.sleep(0.4)
-
     for i, p in enumerate(papers, 1):
-        tags_parts = [p["reason"]]
+        tags_parts = [p.get("source", "论文")]
         if p["cite"]:
             tags_parts.append(f"引用 {p['cite']}")
         tags_parts.append(p["published"])
         tags = " | ".join(tags_parts)
 
         title = f"{keyword} {i}/{len(papers)} | {p['title']}"
-        body = f"{keyword} | {p['authors']}\n{tags}\n\n{p['abstract'] + ('...' if len(p.get('abstract', '')) >= 300 else '')}"
-
-        resp = _post(card(title, [
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**{keyword} | {p['title']}**"}},
-            {"tag": "div", "text": {"tag": "lark_md",
-             "content": body}},
-            {"tag": "hr"},
-            {"tag": "action", "actions": [
-                {"tag": "button", "text": {"tag": "plain_text", "content": "PDF"},
-                 "type": "primary", "url": p.get("pdf", "")},
-                {"tag": "button", "text": {"tag": "plain_text", "content": "arXiv"},
-                 "type": "default", "url": p["url"]},
-            ]},
-        ]))
-        log(f"论文 {i}/{len(papers)} 发送返回: {resp}")
+        metadata = f"**{tags}**"
+        if p.get("authors"):
+            metadata += f"\n{p['authors']}"
+        elements = [
+            {"tag": "div", "text": {"tag": "lark_md", "content": metadata}},
+            {"tag": "collapsible_panel", "expanded": False,
+             "header": {"title": {"tag": "plain_text", "content": "摘要 / 内容简介"}},
+             "elements": [{"tag": "markdown", "content": p.get("abstract") or "暂无摘要"}]},
+        ]
+        actions = []
+        if p.get("pdf"):
+            actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "PDF"},
+                            "type": "primary", "url": p["pdf"]})
+        actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "打开原文"},
+                        "type": "default", "url": p["url"]})
+        elements.extend([{"tag": "hr"}, {"tag": "action", "actions": actions}])
+        resp = _post(card(title, elements))
+        log(f"内容 {i}/{len(papers)} 发送返回: {resp}")
         if resp.get("code") == 0:
             sent_ok.append(p)
         time.sleep(0.4)
@@ -468,7 +533,7 @@ def push(papers: list[dict]) -> list[dict]:
 # ======================== 主流程 ========================
 
 def main(save_state: bool = True) -> None:
-    backfill = float(os.environ.get("BACKFILL_DAYS", 0))
+    backfill = float(os.environ.get("BACKFILL_DAYS") or 0)
     since = datetime.utcnow() - timedelta(days=(backfill or WINDOW_DAYS))
     log(f"===== 开始 | 时间窗起点 {since.isoformat()} | backfill={backfill} =====")
     log(f"数据源模式: {DATA_SOURCE}")
@@ -483,22 +548,27 @@ def main(save_state: bool = True) -> None:
             log(f"  {host}: FAIL ({type(e).__name__})")
 
     papers = fetch_papers(since)
-    log(f"召回 {len(papers)} 篇")
+    social_posts = fetch_social_posts(since)
+    log(f"召回论文 {len(papers)} 篇，社媒内容 {len(social_posts)} 条")
 
     seen = load_seen()
-    new = [p for p in papers if p.get("arxiv_id", "") and p["arxiv_id"] not in seen]
-    log(f"去重后 {len(new)} 篇")
+    new_papers = [p for p in papers if p.get("arxiv_id", "") and p["arxiv_id"] not in seen]
+    new_social = [p for p in social_posts if p["item_id"] not in seen]
+    log(f"去重后论文 {len(new_papers)} 篇，社媒内容 {len(new_social)} 条")
 
-    ranked = rank(new, top=TOP_N)
-    log(f"去重后 {len(new)} 篇, 选中 {len(ranked)} 篇（最多 {TOP_N} 篇）, 准备推送")
-    sent_ok = push(ranked)
+    ranked_papers = rank(new_papers, top=TOP_N)
+    candidates = ranked_papers + new_social
+    candidates.sort(key=lambda item: item.get("published_at", item.get("published", "")), reverse=True)
+    selected = candidates[:TOP_N]
+    log(f"选中 {len(selected)} 条（论文与社媒合计最多 {TOP_N} 条）, 准备推送")
+    sent_ok = push(selected)
 
     if save_state:
         # 只记录实际成功发送的论文
         for p in sent_ok:
-            aid = p.get("arxiv_id", "")
-            if aid:
-                seen.add(aid)
+            item_id = p.get("item_id") or p.get("arxiv_id", "")
+            if item_id:
+                seen.add(item_id)
         save_seen(seen)
     else:
         log("测试模式: 不更新 seen.json")

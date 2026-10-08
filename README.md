@@ -14,8 +14,9 @@
 2. 仓库 Settings → Secrets and variables → Actions → New repository secret:
    - `FEISHU_WEBHOOK`: 你的飞书群机器人 Webhook URL
    - `FEISHU_SECRET`: 飞书机器人签名密钥
+   - `FEISHU_KEYWORD`: 飞书机器人安全设置中配置的关键词
 3. Actions 标签页 → 点 "WAM Paper Bot" → Run workflow → 手动跑一次验证
-4. 验证通过后,脚本会自动按 cron 表达式每两天运行一次
+4. 验证通过后,脚本会每周一北京时间 09:00 运行,论文与社媒内容合计最多推送 3 条
 
 **优势**: GitHub 服务器在国外,直连 arXiv 无压力;不用自己养机器;免费。
 
@@ -37,9 +38,11 @@
 
 GitHub Actions 的 cron 表达式在 `.github/workflows/bot.yml` 中:
 ```
-- cron: '7 2 */2 * *'
+- cron: '0 1 * * 1'
 ```
-这是 UTC 时间,北京时间 = +8小时 → 每两天早上 10:07 运行。
+这是 UTC 时间,北京时间 = +8小时 → 每周一早上 09:00 运行,搜索最近一周内容。
+
+内容来源包括 arXiv、Semantic Scholar,以及通过 Google News RSS 搜索索引发现的知乎和小红书公开内容。社媒搜索依赖搜索引擎索引,不保证覆盖所有帖子或每周都有结果。每周总计最多发送 3 条。
 
 修改 cron 表达式即可改频率,常见参考:
 - 每天早上9点: `0 1 * * *`
