@@ -3,6 +3,10 @@ name: WAM Paper Bot
 permissions:
   contents: write
 
+concurrency:
+  group: wam-paper-bot
+  cancel-in-progress: false
+
 on:
   schedule:
     # 每周一/三/五北京时间 09:00 运行 (UTC 01:00)
@@ -22,6 +26,7 @@ on:
 env:
   FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
   FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+  FEISHU_KEYWORD: ${{ secrets.FEISHU_KEYWORD }}
   HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
   HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}
   ALL_PROXY: ${{ secrets.ALL_PROXY }}
@@ -55,4 +60,21 @@ jobs:
           git config user.name github-actions-bot
           git config user.email bot@local
           git add seen.json run.log
-          git diff --cached --quiet || git commit -m "bot state $(date -u +%F)" && git push
+          if git diff --cached --quiet; then
+            echo "No state changes to commit"
+            exit 0
+          fi
+          git commit -m "bot state $(date -u +%F)"
+          for attempt in 1 2 3; do
+            git fetch origin main
+            if ! git rebase origin/main; then
+              git rebase --abort
+              echo "Could not rebase state commit onto origin/main"
+              exit 1
+            fi
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push failed, retrying ($attempt/3)"
+          done
+          exit 1

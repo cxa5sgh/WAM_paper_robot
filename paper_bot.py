@@ -50,6 +50,7 @@ LOG_FILE    = "run.log"
 # 飞书
 WEBHOOK = os.environ.get("FEISHU_WEBHOOK", "")
 SECRET  = os.environ.get("FEISHU_SECRET", "")
+FEISHU_KEYWORD = os.environ.get("FEISHU_KEYWORD", "WAM").strip() or "WAM"
 
 # 代理 (脚本不会主动连代理, 但 requests 库会读这些环境变量)
 # Windows CMD:      set HTTPS_PROXY=http://127.0.0.1:7890
@@ -417,7 +418,7 @@ def card(title: str, elements: list[dict]) -> dict:
 
 def push(papers: list[dict]) -> list[dict]:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    keyword = "WAM"
+    keyword = FEISHU_KEYWORD
     sent_ok = []
     if not papers:
         resp = _post(card(f"{keyword} 本轮无新增论文", [
