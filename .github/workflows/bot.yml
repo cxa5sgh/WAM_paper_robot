@@ -38,6 +38,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate Feishu keyword
+        run: |
+          if [[ -z "$FEISHU_KEYWORD" ]]; then
+            echo "::error::Missing FEISHU_KEYWORD repository secret. Set it to the exact keyword configured in the Feishu bot security settings."
+            exit 1
+          fi
+        env:
+          FEISHU_KEYWORD: ${{ secrets.FEISHU_KEYWORD }}
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
