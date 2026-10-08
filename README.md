@@ -15,8 +15,11 @@
    - `FEISHU_WEBHOOK`: 你的飞书群机器人 Webhook URL
    - `FEISHU_SECRET`: 飞书机器人签名密钥
    - `FEISHU_KEYWORD`: 飞书机器人安全设置中配置的关键词
-3. Actions 标签页 → 点 "WAM Paper Bot" → Run workflow → 手动跑一次验证
-4. 验证通过后,脚本会每周一北京时间 09:00 运行,论文与社媒内容合计最多推送 3 条
+   - `XHS_COOKIE`: 可选，小红书网页 Cookie；不配置则不启用 xhs 搜索
+   - `XHS_SIGNER_URL`: 可选，ReaJason/xhs Playwright 签名服务的 `/sign` 地址；需与 Cookie 同一签名环境
+4. 如需自定义小红书搜索词,在 Actions Variables 添加 `XHS_SEARCH_KEYWORD` (默认 `世界模型`)
+5. Actions 标签页 → 点 "WAM Paper Bot" → Run workflow → 手动跑一次验证
+6. 验证通过后,脚本会每周一北京时间 09:00 运行,论文与社媒内容合计最多推送 3 条
 
 **优势**: GitHub 服务器在国外,直连 arXiv 无压力;不用自己养机器;免费。
 
@@ -42,7 +45,7 @@ GitHub Actions 的 cron 表达式在 `.github/workflows/bot.yml` 中:
 ```
 这是 UTC 时间,北京时间 = +8小时 → 每周一早上 09:00 运行,搜索最近一周内容。
 
-内容来源包括 arXiv、Semantic Scholar,以及通过 Google News RSS 搜索索引发现的知乎和小红书公开内容。社媒搜索依赖搜索引擎索引,不保证覆盖所有帖子或每周都有结果。每周总计最多发送 3 条。
+内容来源包括 arXiv、Semantic Scholar、Google News RSS 索引中的知乎内容;配置 `XHS_COOKIE` 与 `XHS_SIGNER_URL` 后,额外通过 `xhs` SDK 搜索小红书。该 SDK 依赖有效 Cookie 和外部 Playwright 签名服务,平台可能限流或要求更新 Cookie。社媒来源由最近结果补足,每周总计最多发送 3 条。
 
 修改 cron 表达式即可改频率,常见参考:
 - 每天早上9点: `0 1 * * *`

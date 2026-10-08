@@ -27,6 +27,9 @@ env:
   FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
   FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
   FEISHU_KEYWORD: ${{ secrets.FEISHU_KEYWORD }}
+  XHS_COOKIE: ${{ secrets.XHS_COOKIE }}
+  XHS_SIGNER_URL: ${{ secrets.XHS_SIGNER_URL }}
+  XHS_SEARCH_KEYWORD: ${{ vars.XHS_SEARCH_KEYWORD }}
   HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
   HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}
   ALL_PROXY: ${{ secrets.ALL_PROXY }}

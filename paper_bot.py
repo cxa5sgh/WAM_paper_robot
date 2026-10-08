@@ -55,6 +55,9 @@ SOCIAL_SITES = {"知乎": "zhihu.com", "小红书": "xiaohongshu.com"}
 WEBHOOK = os.environ.get("FEISHU_WEBHOOK", "")
 SECRET  = os.environ.get("FEISHU_SECRET", "")
 FEISHU_KEYWORD = os.environ.get("FEISHU_KEYWORD", "WAM").strip() or "WAM"
+XHS_COOKIE = os.environ.get("XHS_COOKIE", "").strip()
+XHS_SIGNER_URL = os.environ.get("XHS_SIGNER_URL", "").strip()
+XHS_SEARCH_KEYWORD = os.environ.get("XHS_SEARCH_KEYWORD", "世界模型").strip() or "世界模型"
 
 # 代理 (脚本不会主动连代理, 但 requests 库会读这些环境变量)
 # Windows CMD:      set HTTPS_PROXY=http://127.0.0.1:7890
@@ -305,7 +308,7 @@ def fetch_from_s2(since: datetime) -> list[dict]:
 
 
 def fetch_social_posts(since: datetime) -> list[dict]:
-    """通过公开新闻 RSS 发现知乎和小红书的世界模型相关内容。"""
+    """通过公开新闻 RSS 发现知乎内容，并可选使用 xhs SDK 搜索小红书。"""
     import xml.etree.ElementTree as ET
 
     query = '("world model" OR "世界模型" OR "world action model")'
@@ -363,6 +366,125 @@ def fetch_social_posts(since: datetime) -> list[dict]:
             seen_urls.add(url)
 
     log(f"  社媒 RSS 召回 {len(posts)} 条")
+    return posts + fetch_xhs_posts(since, {post["url"] for post in posts})
+
+
+def _parse_xhs_time(value: Any) -> datetime | None:
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if isinstance(value, (int, float)):
+        timestamp = value / 1000 if value > 10_000_000_000 else value
+        try:
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc).replace(tzinfo=None)
+        except (OSError, OverflowError, ValueError):
+            return None
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except ValueError:
+            return None
+    return None
+
+
+def fetch_xhs_posts(since: datetime, existing_urls: set[str] | None = None) -> list[dict]:
+    """Search recent Xiaohongshu notes through the optional xhs SDK integration."""
+    if not XHS_COOKIE or not XHS_SIGNER_URL:
+        log("  小红书 SDK 未启用（需要配置 XHS_COOKIE 和 XHS_SIGNER_URL）")
+        return []
+
+    try:
+        from xhs import SearchSortType, XhsClient
+    except ImportError:
+        log("  小红书 SDK 不可用；检查 requirements.txt 是否安装 xhs")
+        return []
+
+    def sign(uri: str, data: dict | None = None, a1: str = "", web_session: str = "") -> dict[str, str]:
+        response = requests.post(
+            XHS_SIGNER_URL,
+            json={"uri": uri, "data": data, "a1": a1, "web_session": web_session},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        signature = response.json()
+        if not signature.get("x-s") or not signature.get("x-t"):
+            raise ValueError("signer response is missing x-s or x-t")
+        return {"x-s": signature["x-s"], "x-t": str(signature["x-t"])}
+
+    try:
+        client = XhsClient(cookie=XHS_COOKIE, timeout=REQUEST_TIMEOUT, sign=sign)
+        result = client.get_note_by_keyword(
+            XHS_SEARCH_KEYWORD,
+            page=1,
+            page_size=20,
+            sort=SearchSortType.LATEST,
+        )
+    except Exception as exc:
+        log(f"  小红书搜索失败: {type(exc).__name__}")
+        return []
+
+    posts = []
+    existing_urls = existing_urls or set()
+    items = result.get("items", []) if isinstance(result, dict) else []
+    if not isinstance(items, list):
+        log("  小红书搜索结果格式无效")
+        return []
+
+    seen_note_ids = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        note = item.get("note_card") or item.get("noteCard") or item
+        if not isinstance(note, dict):
+            continue
+        note_id = (
+            item.get("id") or item.get("note_id") or item.get("noteId")
+            or note.get("note_id") or note.get("noteId") or note.get("id")
+        )
+        if not note_id or str(note_id) in seen_note_ids:
+            continue
+
+        published_at = None
+        for value in (
+            note.get("time"), note.get("publish_time"), note.get("publishTime"),
+            note.get("last_update_time"), note.get("lastUpdateTime"),
+            item.get("time"), item.get("publish_time"), item.get("publishTime"),
+        ):
+            published_at = _parse_xhs_time(value)
+            if published_at is not None:
+                break
+        if published_at is None or published_at < since:
+            continue
+
+        token = item.get("xsec_token") or item.get("xsecToken") or note.get("xsec_token") or ""
+        url = f"https://www.xiaohongshu.com/explore/{note_id}"
+        if token:
+            url += f"?xsec_token={token}&xsec_source=pc_search"
+        if url in existing_urls:
+            continue
+
+        user = note.get("user") or item.get("user") or {}
+        if not isinstance(user, dict):
+            user = {}
+        posts.append({
+            "title": note.get("display_title") or note.get("displayTitle") or note.get("title") or "小红书世界模型笔记",
+            "authors": user.get("nickname") or user.get("nick_name") or user.get("nickName") or "小红书用户",
+            "abstract": note.get("desc") or note.get("description") or "",
+            "url": url,
+            "pdf": "",
+            "published": published_at.strftime("%Y-%m-%d"),
+            "published_at": published_at.replace(tzinfo=timezone.utc).isoformat(),
+            "arxiv_id": "",
+            "item_id": f"xhs:{note_id}",
+            "source": "小红书",
+            "cite": 0,
+        })
+        existing_urls.add(url)
+        seen_note_ids.add(str(note_id))
+
+    log(f"  小红书 SDK 搜索到 {len(posts)} 条近一周内容")
     return posts
 
 
