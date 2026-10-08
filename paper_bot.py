@@ -475,8 +475,8 @@ def main() -> None:
     new = [p for p in papers if p.get("arxiv_id", "") and p["arxiv_id"] not in seen]
     log(f"去重后 {len(new)} 篇")
 
-    ranked = rank(new)
-    log(f"选中 {len(ranked)} 篇, 准备推送")
+    ranked = rank(new, top=TOP_N)
+    log(f"去重后 {len(new)} 篇, 选中 {len(ranked)} 篇（最多 {TOP_N} 篇）, 准备推送")
     push(ranked)
 
     # 更新去重表
