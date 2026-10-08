@@ -17,6 +17,10 @@ on:
 env:
   FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
   FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+  HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
+  HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}
+  ALL_PROXY: ${{ secrets.ALL_PROXY }}
+  NO_PROXY: localhost,127.0.0.1
 
 jobs:
   run:
