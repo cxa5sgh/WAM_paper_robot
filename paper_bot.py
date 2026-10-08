@@ -408,16 +408,17 @@ def card(title: str, elements: list[dict]) -> dict:
         },
     }
 
-def push(papers: list[dict]) -> None:
+def push(papers: list[dict]) -> list[dict]:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     keyword = "WAM"
+    sent_ok = []
     if not papers:
         resp = _post(card(f"{keyword} 本轮无新增论文", [
             {"tag": "div", "text": {"tag": "lark_md",
              "content": f"**{keyword} 时间**: {now}\n**说明**: 时间窗内无符合条件的新论文(不代表没有新工作,可能是关键词未覆盖)。"}},
         ]))
         log(f"空结果通知发送返回: {resp}")
-        return
+        return sent_ok
 
     # 头部
     resp = _post(card(f"{keyword} 论文速递", [
@@ -450,7 +451,10 @@ def push(papers: list[dict]) -> None:
             ]},
         ]))
         log(f"论文 {i}/{len(papers)} 发送返回: {resp}")
+        if resp.get("code") == 0:
+            sent_ok.append(p)
         time.sleep(0.4)
+    return sent_ok
 
 
 # ======================== 主流程 ========================
@@ -479,10 +483,10 @@ def main() -> None:
 
     ranked = rank(new, top=TOP_N)
     log(f"去重后 {len(new)} 篇, 选中 {len(ranked)} 篇（最多 {TOP_N} 篇）, 准备推送")
-    push(ranked)
+    sent_ok = push(ranked)
 
-    # 更新去重表
-    for p in papers:
+    # 只记录实际成功发送的论文
+    for p in sent_ok:
         aid = p.get("arxiv_id", "")
         if aid:
             seen.add(aid)
