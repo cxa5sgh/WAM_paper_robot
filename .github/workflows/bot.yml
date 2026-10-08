@@ -1,5 +1,8 @@
 name: WAM Paper Bot
 
+permissions:
+  contents: write
+
 on:
   schedule:
     # 每周一/三/五北京时间 09:00 运行 (UTC 01:00)
