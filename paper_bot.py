@@ -42,7 +42,7 @@ DATA_SOURCE = os.environ.get("DATA_SOURCE", "auto").lower()
 
 # 输出配置
 TOP_N       = 3
-WINDOW_DAYS = 2.5
+WINDOW_DAYS = 3.0  # 每次抓取最近 3 天，适合周一/三/五 9:00 定时推送
 SEEN_FILE   = "seen.json"
 LOG_FILE    = "run.log"
 
