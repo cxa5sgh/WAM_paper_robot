@@ -466,7 +466,7 @@ def push(papers: list[dict]) -> list[dict]:
 
 # ======================== 主流程 ========================
 
-def main() -> None:
+def main(save_state: bool = True) -> None:
     backfill = float(os.environ.get("BACKFILL_DAYS", 0))
     since = datetime.utcnow() - timedelta(days=(backfill or WINDOW_DAYS))
     log(f"===== 开始 | 时间窗起点 {since.isoformat()} | backfill={backfill} =====")
@@ -492,22 +492,26 @@ def main() -> None:
     log(f"去重后 {len(new)} 篇, 选中 {len(ranked)} 篇（最多 {TOP_N} 篇）, 准备推送")
     sent_ok = push(ranked)
 
-    # 只记录实际成功发送的论文
-    for p in sent_ok:
-        aid = p.get("arxiv_id", "")
-        if aid:
-            seen.add(aid)
-    save_seen(seen)
+    if save_state:
+        # 只记录实际成功发送的论文
+        for p in sent_ok:
+            aid = p.get("arxiv_id", "")
+            if aid:
+                seen.add(aid)
+        save_seen(seen)
+    else:
+        log("测试模式: 不更新 seen.json")
     log("完成")
 
 if __name__ == "__main__":
     if "--reset-seen" in sys.argv or "-r" in sys.argv:
         reset_seen()
         raise SystemExit(0)
+    save_state = "--no-save-seen" not in sys.argv
     log("=== WAM Paper Bot v2 启动 ===")
     log(f"Python: {sys.version}")
     try:
-        main()
+        main(save_state=save_state)
     except KeyboardInterrupt:
         log("用户中断")
     except Exception as e:
