@@ -410,18 +410,19 @@ def card(title: str, elements: list[dict]) -> dict:
 
 def push(papers: list[dict]) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    keyword = "WAM"
     if not papers:
-        resp = _post(card("本轮无新增 WAM 论文", [
+        resp = _post(card(f"{keyword} 本轮无新增论文", [
             {"tag": "div", "text": {"tag": "lark_md",
-             "content": f"**时间**: {now}\n**说明**: 时间窗内无符合条件的新论文(不代表没有新工作,可能是关键词未覆盖)。"}},
+             "content": f"**{keyword} 时间**: {now}\n**说明**: 时间窗内无符合条件的新论文(不代表没有新工作,可能是关键词未覆盖)。"}},
         ]))
         log(f"空结果通知发送返回: {resp}")
         return
 
     # 头部
-    resp = _post(card("WAM 论文速递", [
+    resp = _post(card(f"{keyword} 论文速递", [
         {"tag": "div", "text": {"tag": "lark_md",
-         "content": f"**{datetime.now():%Y-%m-%d}  共 {len(papers)} 篇**\n按相关性排序,展示前 {len(papers)} 篇"}},
+         "content": f"**{keyword} | {datetime.now():%Y-%m-%d}  共 {len(papers)} 篇**\n按相关性排序,展示前 {len(papers)} 篇"}},
     ]))
     log(f"头部通知发送返回: {resp}")
     time.sleep(0.4)
@@ -433,12 +434,13 @@ def push(papers: list[dict]) -> None:
         tags_parts.append(p["published"])
         tags = " | ".join(tags_parts)
 
-        resp = _post(card(f"{i}/{len(papers)}", [
-            {"tag": "div", "text": {"tag": "lark_md", "content": f"**{p['title']}**"}},
+        title = f"{keyword} {i}/{len(papers)} | {p['title']}"
+        body = f"{keyword} | {p['authors']}\n{tags}\n\n{p['abstract'] + ('...' if len(p.get('abstract', '')) >= 300 else '')}"
+
+        resp = _post(card(title, [
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**{keyword} | {p['title']}**"}},
             {"tag": "div", "text": {"tag": "lark_md",
-             "content": f"{p['authors']}\n{tags}"}},
-            {"tag": "div", "text": {"tag": "lark_md",
-             "content": p["abstract"] + ("..." if len(p.get("abstract", "")) >= 300 else "")}},
+             "content": body}},
             {"tag": "hr"},
             {"tag": "action", "actions": [
                 {"tag": "button", "text": {"tag": "plain_text", "content": "PDF"},
