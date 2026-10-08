@@ -375,22 +375,28 @@ def _sign() -> dict[str, str]:
 
 def _post(payload: dict) -> dict:
     if not WEBHOOK:
+        log("未配置 FEISHU_WEBHOOK")
         return {"code": -1, "msg": "未配置 FEISHU_WEBHOOK"}
     body = json.dumps({**payload, **_sign()}, ensure_ascii=False)
+    last = None
     for i in range(3):
         try:
             r = requests.post(WEBHOOK, data=body,
                               headers={"Content-Type": "application/json"}, timeout=8)
             resp = r.json()
+            log(f"Feishu POST: status={r.status_code}, body={resp}")
             if resp.get("code") == 0:
                 return resp
             if resp.get("code") == 11232:
+                log(f"Feishu 限流(429), 等 {2 ** i + 1}s 后重试 ({i + 1}/3)")
                 time.sleep(2 ** i + 1)
                 continue
             return resp
         except Exception as e:
             last = e
+            log(f"Feishu 请求异常: {type(e).__name__}: {e}")
             time.sleep(1)
+    log(f"Feishu 最终失败: {last}")
     return {"code": -1, "msg": str(last)}
 
 def card(title: str, elements: list[dict]) -> dict:
@@ -405,17 +411,19 @@ def card(title: str, elements: list[dict]) -> dict:
 def push(papers: list[dict]) -> None:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     if not papers:
-        _post(card("本轮无新增 WAM 论文", [
+        resp = _post(card("本轮无新增 WAM 论文", [
             {"tag": "div", "text": {"tag": "lark_md",
              "content": f"**时间**: {now}\n**说明**: 时间窗内无符合条件的新论文(不代表没有新工作,可能是关键词未覆盖)。"}},
         ]))
+        log(f"空结果通知发送返回: {resp}")
         return
 
     # 头部
-    _post(card("WAM 论文速递", [
+    resp = _post(card("WAM 论文速递", [
         {"tag": "div", "text": {"tag": "lark_md",
          "content": f"**{datetime.now():%Y-%m-%d}  共 {len(papers)} 篇**\n按相关性排序,展示前 {len(papers)} 篇"}},
     ]))
+    log(f"头部通知发送返回: {resp}")
     time.sleep(0.4)
 
     for i, p in enumerate(papers, 1):
@@ -425,7 +433,7 @@ def push(papers: list[dict]) -> None:
         tags_parts.append(p["published"])
         tags = " | ".join(tags_parts)
 
-        _post(card(f"{i}/{len(papers)}", [
+        resp = _post(card(f"{i}/{len(papers)}", [
             {"tag": "div", "text": {"tag": "lark_md", "content": f"**{p['title']}**"}},
             {"tag": "div", "text": {"tag": "lark_md",
              "content": f"{p['authors']}\n{tags}"}},
@@ -439,6 +447,7 @@ def push(papers: list[dict]) -> None:
                  "type": "default", "url": p["url"]},
             ]},
         ]))
+        log(f"论文 {i}/{len(papers)} 发送返回: {resp}")
         time.sleep(0.4)
 
 
